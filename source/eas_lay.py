@@ -2,6 +2,7 @@ import math
 import time
 
 import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -56,7 +57,7 @@ class prob_calc_added_layers_CVRP(nn.Module):
 
         self.encoded_graph = encoded_graph
 
-    def forward(self, input2, remaining_loaded, ninf_mask=None):
+    def forward(self, input2, remaining_loaded, pheromone, ninf_mask=None):
         # input1.shape = (batch, 1, EMBEDDING_DIM)
         # input2.shape = (batch, group, EMBEDDING_DIM)
         # remaining_loaded.shape = (batch, group, 1)
@@ -100,8 +101,9 @@ class prob_calc_added_layers_CVRP(nn.Module):
 
         score_scaled = score / np.sqrt(EMBEDDING_DIM)
         # shape = (batch_s, group, problem+1)
+        score_b = pheromone ** ALPHA * torch.where(score_scaled<0,-1,1) * torch.abs(score_scaled) ** BETA #* torch.nan_to_num(temp_savings ** self.Gamma)  # phero score
 
-        score_clipped = LOGIT_CLIPPING * torch.tanh(score_scaled)
+        score_clipped = LOGIT_CLIPPING * torch.tanh(score_b)
 
         if ninf_mask is None:
             score_masked = score_clipped
@@ -287,6 +289,7 @@ def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_
         ###############################################
 
         t_start = time.time()
+        pheromone = torch.ones(batch_size, problem_size,problem_size)
         for iter in range(config.max_iter):
             group_state, reward, done = env.reset(group_size=group_s)
 
@@ -316,10 +319,13 @@ def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_
 
             group_prob_list = Tensor(np.zeros((batch_s, group_s, 0)))
             while not done:
-                action_probs = grouped_actor_modified.get_action_probabilities(group_state)
+                action_probs = grouped_actor_modified.get_action_probabilities(group_state, pheromone.repeat(p_runs*AUG_S,1,1))
                 # shape = (batch_s, group_s, problem)
-                action = action_probs.reshape(batch_s * group_s, -1).multinomial(1) \
+                action_type = torch.rand(batch_s, group_s)
+                sample_action = action_probs.reshape(batch_s * group_s, -1).multinomial(1) \
                     .squeeze(dim=1).reshape(batch_s, group_s)
+                greedy_action = action_probs.argmax(dim = 2)
+                action = torch.where(action_type<QZERO, greedy_action, sample_action)
                 # shape = (batch_s, group_s)
                 if iter > 0:
                     action[:, -1] = incumbent_solutions_expanded[:, step]  # Teacher forcing the imitation learning loss
@@ -328,7 +334,7 @@ def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_
                     action[group_state.finished] = 0  # stay at depot, if you are finished
                 group_state, reward, done = env.step(action)
                 solutions.append(action.unsqueeze(2))
-
+                pheromone = pheromone_local_update(pheromone,action, group_state.current_node)
                 batch_idx_mat = torch.arange(int(batch_s))[:, None].expand(batch_s,
                                                                            group_s)
                 group_idx_mat = torch.arange(group_s)[None, :].expand(batch_s, group_s)
@@ -358,6 +364,8 @@ def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_
                 max_reward, _ = max_reward.max(dim=0)
 
                 reward_g = group_reward.permute(1, 0, 2).reshape(batch_r, -1)
+                if iter == 0:
+                    pheroWeight = reward_g.mean(dim=1)
                 iter_max_k, iter_best_k = torch.topk(reward_g, k=1, dim=1)
                 solutions = solutions.reshape(AUG_S, batch_r, group_s, -1)
                 solutions = solutions.permute(1, 0, 2, 3).reshape(batch_r, AUG_S * group_s, -1)
@@ -365,6 +373,7 @@ def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_
                                                    iter_best_k.unsqueeze(2).expand(-1, -1, solutions.shape[2])).squeeze(
                     1)
                 incumbent_solutions[:, :best_solutions_iter.shape[1]] = best_solutions_iter
+                pheromone = pheromone_global_update(pheromone, incumbent_solutions, pheroWeight/max_reward)
 
             # LEARNING - Actor
             # Use the same reinforcement learning method as during the training of the model
@@ -398,3 +407,44 @@ def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_
         episode * config.batch_size: episode * config.batch_size + batch_size] = -max_reward.cpu().numpy()
 
     return instance_costs, instance_solutions
+
+def pheromone_local_update(pheromone, action, current_node):
+    """locally update the pheromone after taking actions
+
+    Args:
+        pheromone (torch.Tensor[batch_size, problem_size, probelm_size]): pheromone
+        action (torch.Tensor[aug*batch_size, group_size]): next node
+        current_node (aug*batch_size, group_size): current_node
+    """    
+    batch_size = pheromone.size(0)
+    batch_s = action.size(0)
+    aug_factor = int(batch_s/batch_size)
+    problem_size = pheromone.size(1)
+
+    pos0 = ((action*problem_size)+current_node).reshape(aug_factor,batch_size,-1).transpose(0,1).reshape(batch_size,-1)
+    pos1 = (action+(current_node*problem_size)).reshape(aug_factor,batch_size,-1).transpose(0,1).reshape(batch_size,-1)
+    flatten_pheromone = pheromone.reshape(batch_size,-1)
+    temp_phero0 = torch.ones_like(flatten_pheromone) * ZETA
+    flatten_pheromone.scatter_(1,pos0,1-ZETA,reduce='multiply').scatter_add_(1,pos0,temp_phero0)
+    flatten_pheromone.scatter_(1,pos1,1-ZETA,reduce='multiply').scatter_add_(1,pos1,temp_phero0)
+    return flatten_pheromone.reshape_as(pheromone)
+
+def pheromone_global_update(pheromone, solution, reward):
+    """globally update the pheromone
+
+    Args:
+        pheromone (torch.Tensor[batch_size, problem_size, probelm_size]): pheromone
+        solution (torch.Tensor[batch_size, 2*problem_size]): best solution of all instance
+        reward (torch.Tensor[batch_size,])): cost of the best solution
+    """    
+    rolled_solution = torch.roll(solution, 1, 1)
+    problem_size = pheromone.size(1)
+    pos0 = solution*problem_size+rolled_solution
+    pos1 = solution+rolled_solution*problem_size
+    reward = reward.unsqueeze(-1).expand_as(pos0)
+    add_phero = torch.zeros_like(pheromone).reshape(-1,problem_size**2)
+    add_phero.scatter_add_(1,pos0, reward)
+    add_phero.scatter_add_(1,pos1, reward)
+    add_phero[:,0] = 0
+    add_phero.reshape_as(pheromone)
+    return torch.where(add_phero>0, pheromone*RHO+add_phero,pheromone)

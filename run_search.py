@@ -33,7 +33,7 @@ def get_config():
     parser.add_argument('-method', default="eas_lay", type=str, help="sampling, eas-emb, eas-lay, or eas-tab")
     parser.add_argument('-model_path', default="", type=str, help="Path of the trained model weights")
 
-    parser.add_argument('-instances_path', default="", type=str, help="Path of the instances")
+    parser.add_argument('-instances_path', default="instances/cvrp/vrp100_test_seed1234.pkl", type=str, help="Path of the instances")
     parser.add_argument('-nb_instances', default=100000, type=int,
                         help="Maximum number of instances that should be solved")
     parser.add_argument('-instances_offset', default=0, type=int)
@@ -41,7 +41,7 @@ def get_config():
     parser.add_argument('-round_distances', default=False, action='store_true',
                         help="Round distances to the nearest integer. Required to solve .vrp instances")
 
-    parser.add_argument('-max_iter', default=10000, type=int, help="Maximum number of EAS iterations")
+    parser.add_argument('-max_iter', default=200, type=int, help="Maximum number of EAS iterations")
     parser.add_argument('-max_runtime', default=100000, type=int, help="Maximum runtime of EAS per batch in seconds")
 
     parser.add_argument('-batch_size', default=25, type=int)  # Set to 1 for single instance search

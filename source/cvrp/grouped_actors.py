@@ -60,14 +60,14 @@ class ACTOR(nn.Module):
 
         self.node_prob_calculator.reset(self.encoded_graph, self.encoded_nodes)
 
-    def get_action_probabilities(self, group_state):
+    def get_action_probabilities(self, group_state, pheromone):
         encoded_LAST_NODES = pick_nodes_for_each_group(self.encoded_nodes, group_state.current_node)
         # shape = (batch, group, EMBEDDING_DIM)
         remaining_loaded = group_state.loaded[:, :, None]
         # shape = (batch, group, 1)
 
         item_select_probabilities = self.node_prob_calculator(encoded_LAST_NODES,
-                                                              remaining_loaded, ninf_mask=group_state.ninf_mask)
+                                                              remaining_loaded, pheromone, ninf_mask=group_state.ninf_mask)
         # shape = (batch, group, problem+1)
 
         return item_select_probabilities
