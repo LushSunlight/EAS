@@ -234,6 +234,10 @@ def replace_decoder(grouped_actor, batch_s, state, problem):
 
 def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_data_fn,
                 augment_and_repeat_episode_data_fn):
+    # 设置默认设备为 GPU
+    torch.cuda.set_device(0)
+    device = torch.device('cuda', 0)
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
     """
     Efficient active search using added layer updates
     """
@@ -287,9 +291,8 @@ def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_
 
         # Start the search
         ###############################################
-
-        t_start = time.time()
-        pheromone = torch.ones(batch_size, problem_size,problem_size)
+        pheromone = torch.ones(batch_size, problem_size+1,problem_size+1)
+        t_start =time.time()
         for iter in range(config.max_iter):
             group_state, reward, done = env.reset(group_size=group_s)
 
@@ -395,8 +398,7 @@ def run_eas_lay(grouped_actor, instance_data, problem_size, config, get_episode_
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-            print(max_reward)
+            #print(max_reward)
 
             if time.time() - t_start > config.max_runtime:
                 break
@@ -443,8 +445,8 @@ def pheromone_global_update(pheromone, solution, reward):
     pos1 = solution+rolled_solution*problem_size
     reward = reward.unsqueeze(-1).expand_as(pos0)
     add_phero = torch.zeros_like(pheromone).reshape(-1,problem_size**2)
-    add_phero.scatter_add_(1,pos0, reward)
-    add_phero.scatter_add_(1,pos1, reward)
+    add_phero.scatter_add_(1,pos0.to(torch.int64), reward)
+    add_phero.scatter_add_(1,pos1.to(torch.int64), reward)
     add_phero[:,0] = 0
-    add_phero.reshape_as(pheromone)
+    add_phero=add_phero.reshape_as(pheromone)
     return torch.where(add_phero>0, pheromone*RHO+add_phero,pheromone)

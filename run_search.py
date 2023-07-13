@@ -30,8 +30,8 @@ def get_config():
     parser = argparse.ArgumentParser(description='Efficient Active Search')
 
     parser.add_argument('-problem', default="CVRP", type=str, help="TSP or CVRP")
-    parser.add_argument('-method', default="eas_lay", type=str, help="sampling, eas-emb, eas-lay, or eas-tab")
-    parser.add_argument('-model_path', default="", type=str, help="Path of the trained model weights")
+    parser.add_argument('-method', default="eas-lay", type=str, help="sampling, eas-emb, eas-lay, or eas-tab")
+    parser.add_argument('-model_path', default="trained_models\CVRP_100\ACTOR_state_dic.pt", type=str, help="Path of the trained model weights")
 
     parser.add_argument('-instances_path', default="instances/cvrp/vrp100_test_seed1234.pkl", type=str, help="Path of the instances")
     parser.add_argument('-nb_instances', default=100000, type=int,
@@ -44,7 +44,7 @@ def get_config():
     parser.add_argument('-max_iter', default=200, type=int, help="Maximum number of EAS iterations")
     parser.add_argument('-max_runtime', default=100000, type=int, help="Maximum runtime of EAS per batch in seconds")
 
-    parser.add_argument('-batch_size', default=25, type=int)  # Set to 1 for single instance search
+    parser.add_argument('-batch_size', default=50, type=int)  # Set to 1 for single instance search
     parser.add_argument('-p_runs', default=1,
                         type=int)  # If batch_size is 1, set this to > 1 to do multiple runs for the instance in parallel
 
